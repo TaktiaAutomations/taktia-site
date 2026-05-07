@@ -1,20 +1,27 @@
 /*
- * Chatbot funcional da Taktia
- * Responde perguntas básicas sobre a empresa
- * Quando não sabe responder, dispara webhook n8n para notificar a equipe
+ * Chatbot da Taktia com agente no backend via OpenAI
+ * Mantem uma base local como fallback para nao quebrar a experiencia
  */
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Bot, MessageCircle, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-const WEBHOOK_URL = "https://n8n.taktia.com.br/webhook/sitetaktia";
+const CHAT_STORAGE_KEY = "taktia-chat-session-id";
+const DEFAULT_FALLBACK_RESPONSE =
+  "Não consegui responder agora. Posso te conectar com a equipe da Taktia pelo WhatsApp (34) 99859-2724 ou pelo e-mail taktia@taktia.com.br.";
 
 interface Message {
   id: number;
   text: string;
   sender: "user" | "bot";
   timestamp: Date;
+}
+
+interface ChatApiResponse {
+  reply?: string;
+  source?: string;
+  error?: string;
 }
 
 // Base de conhecimento da Taktia
@@ -120,10 +127,26 @@ export default function Chatbot() {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sessionIdRef = useRef<string>("");
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const existingSessionId = window.localStorage.getItem(CHAT_STORAGE_KEY);
+    const sessionId = existingSessionId || window.crypto.randomUUID();
+
+    if (!existingSessionId) {
+      window.localStorage.setItem(CHAT_STORAGE_KEY, sessionId);
+    }
+
+    sessionIdRef.current = sessionId;
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -131,21 +154,26 @@ export default function Chatbot() {
     }
   }, [isOpen]);
 
-  const sendToWebhook = async (userMessage: string) => {
-    try {
-      await fetch(WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo: "chatbot_sem_resposta",
-          pergunta: userMessage,
-          data: new Date().toISOString(),
-          origem: "chatbot_site_taktia",
-        }),
-      });
-    } catch {
-      // Silently fail - don't break the chat experience
-    }
+  const requestBackendReply = async (userMessage: string, history: Message[]) => {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: userMessage,
+        sessionId: sessionIdRef.current,
+        pageUrl: window.location.href,
+        history: history.slice(-12).map((message) => ({
+          role: message.sender === "user" ? "user" : "assistant",
+          content: message.text,
+        })),
+      }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as ChatApiResponse;
+    return {
+      ok: response.ok,
+      reply: data.reply?.trim() || null,
+    };
   };
 
   const handleSend = async () => {
@@ -166,33 +194,36 @@ export default function Chatbot() {
     // Simulate thinking delay
     await new Promise((r) => setTimeout(r, 800 + Math.random() * 700));
 
-    const response = findResponse(trimmed);
+    try {
+      const historySnapshot = [...messages, userMsg];
+      const apiResponse = await requestBackendReply(trimmed, historySnapshot);
+      const fallbackResponse = findResponse(trimmed);
+      const botText = apiResponse.reply ?? fallbackResponse ?? DEFAULT_FALLBACK_RESPONSE;
 
-    if (response) {
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
-          text: response,
+          text: botText,
           sender: "bot",
           timestamp: new Date(),
         },
       ]);
-    } else {
-      // Não sabe responder - notifica via webhook
-      await sendToWebhook(trimmed);
+    } catch {
+      const fallbackResponse = findResponse(trimmed) ?? DEFAULT_FALLBACK_RESPONSE;
+
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
-          text: "Essa é uma ótima pergunta! Infelizmente, não tenho essa informação no momento. Já notifiquei nossa equipe sobre sua dúvida e alguém entrará em contato em breve.\n\nVocê também pode nos contatar diretamente:\n📱 WhatsApp: (34) 99859-2724\n📧 E-mail: taktia@taktia.com.br",
+          text: fallbackResponse,
           sender: "bot",
           timestamp: new Date(),
         },
       ]);
+    } finally {
+      setIsTyping(false);
     }
-
-    setIsTyping(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

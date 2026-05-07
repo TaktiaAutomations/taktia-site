@@ -1,7 +1,7 @@
 /*
  * Design: Neural Network Organic Tech
  * Formulário de contato com glassmorphism, inputs estilizados
- * Integrado com webhook n8n para envio real
+ * Integrado com backend para envio real
  */
 
 import AnimatedSection from "@/components/AnimatedSection";
@@ -9,8 +9,6 @@ import { motion } from "framer-motion";
 import { Mail, MapPin, Phone, Send } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-
-const WEBHOOK_URL = "https://n8n.taktia.com.br/webhook/sitetaktia";
 
 export default function ContactSection() {
   const [formData, setFormData] = useState({
@@ -28,19 +26,16 @@ export default function ContactSection() {
     setSending(true);
 
     try {
-      const response = await fetch(WEBHOOK_URL, {
+      const response = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tipo: "formulario_contato",
-          nome: formData.name,
+          name: formData.name,
           email: formData.email,
-          telefone: formData.phone,
-          empresa: formData.company,
-          servico: formData.service,
-          mensagem: formData.message,
-          data: new Date().toISOString(),
-          origem: "site_taktia",
+          phone: formData.phone,
+          company: formData.company,
+          service: formData.service,
+          message: formData.message,
         }),
       });
 

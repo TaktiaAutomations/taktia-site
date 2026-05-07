@@ -1,0 +1,179 @@
+{
+  "name": "Taktia Chatbot Agent",
+  "nodes": [
+    {
+      "id": "webhook-chat",
+      "name": "Chat Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "path": "taktia-chat",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "prepare-input",
+      "name": "Prepare Chat Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300],
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst normalizeText = (value) => typeof value === 'string' ? value.trim() : '';\nconst message = normalizeText(body.message);\nif (!message) {\n  throw new Error('message is required');\n}\nconst sessionId = normalizeText(body.sessionId) || `anon-${Date.now()}`;\nconst pageUrl = normalizeText(body.pageUrl);\nconst history = Array.isArray(body.history)\n  ? body.history\n      .filter((item) => item && typeof item === 'object' && typeof item.content === 'string')\n      .slice(-12)\n      .map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content }))\n  : [];\nconst companyContext = [\n  'Empresa: Taktia Automações.',\n  'Especialidades: integracao de plataformas, atendimento com IA e automacao de processos.',\n  'Cidade: Uberlandia, MG.',\n  'Contato: taktia@taktia.com.br e WhatsApp (34) 99859-2724.',\n  'Objetivo do chatbot: qualificar leads, responder duvidas comerciais e direcionar para contato humano quando necessario.'\n].join(' ');\nreturn [{\n  json: {\n    sessionId,\n    pageUrl,\n    chatInput: message,\n    history,\n    companyContext\n  }\n}];"
+      }
+    },
+    {
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [780, 300],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "Voce e o assistente comercial da Taktia. Responda em portugues do Brasil, de forma objetiva, consultiva e profissional. Use o contexto da empresa quando suficiente. Quando a pergunta exigir diagnostico comercial, faca no maximo 2 perguntas de qualificacao antes de sugerir um proximo passo. Se faltar informacao critica, diga claramente o que precisa. Nunca invente cases, precos fechados, integracoes ou promessas. Sempre que houver intencao comercial, convide para contato humano pelo WhatsApp (34) 99859-2724 ou e-mail taktia@taktia.com.br.",
+          "maxIterations": 4
+        }
+      }
+    },
+    {
+      "id": "openai-model",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [780, 520],
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 700
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "id": "simple-memory",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [980, 520],
+      "parameters": {
+        "sessionKey": "={{ $json.sessionId }}",
+        "contextWindowLength": 10
+      }
+    },
+    {
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 300],
+      "parameters": {
+        "jsCode": "const raw = $json.output ?? $json.text ?? $json.message ?? '';\nconst reply = typeof raw === 'string' ? raw.trim() : JSON.stringify(raw);\nreturn [{\n  json: {\n    reply,\n    source: 'n8n',\n    sessionId: $('Prepare Chat Input').first().json.sessionId\n  }\n}];"
+      }
+    },
+    {
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1300, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Chat Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Chat Input": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
