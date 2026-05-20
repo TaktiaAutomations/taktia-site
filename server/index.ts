@@ -4,6 +4,8 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createHmac } from "node:crypto";
+import { registerLinkedinDiagnosticsRoutes } from "./linkedinDiagnostics";
+import { registerLinkedinOAuthRoutes } from "./linkedinOAuth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -308,6 +310,20 @@ async function startServer() {
       });
     }
   });
+
+  try {
+    await registerLinkedinDiagnosticsRoutes(app);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    console.error(`[linkedin-diagnostic] Rotas desativadas: ${details}`);
+  }
+
+  try {
+    await registerLinkedinOAuthRoutes(app);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    console.error(`[linkedin-oauth] Rotas desativadas: ${details}`);
+  }
 
   // Serve static files from dist/public in production
   const staticPath =
